@@ -25,11 +25,16 @@ nos datasheets e não é modelado. Novos modelos: adicionar uma entrada em `MAGN
 ## Launcher
 - A **antena** vem do magnetron (`antennaH` em `MAGNETRONS`); para o YJ1600 é uma estimativa de 28 mm
   (a Fig. 3 do datasheet Toshiba, conector de saída de RF, não estava no PDF recebido).
-- **Peça capacitiva** de latão prateado, flutuante em haste de teflon, entre a antena e a saída: disco flutuante
-  entre as paredes superior/inferior, C = ε0·A/(b−t) em série (a folga ao teto se cancela), ΔC sobre o guia vazio
-  entra como susceptância shunt na posição da peça. No modelo de placas paralelas o efeito é pequeno (~1 fF);
-  o campo **C adicional (pF)** serve para calibrar com CST/VNA o acoplamento real com a antena.
-- Botões "Otimizar backshort" e "Otimizar C adicional" minimizam |Γ| na frequência de operação.
+- **Peça capacitiva** de latão prateado, flutuante em haste de teflon, **móvel ±200 mm** ao longo do guia
+  (+ rumo à saída, − rumo ao backshort; limitada entre o backshort e o circulador). Disco flutuante entre as
+  paredes: C = ε0·A/(b−t) em série (a folga ao teto se cancela); ΔC sobre o guia vazio vira susceptância shunt.
+  À frente da antena é um shunt no plano x (L1 é medido da antena, então o guia 1 vai de x até o circulador);
+  atrás da antena entra na susceptância do backshort. No modelo de placas paralelas o disco sozinho vale
+  ~1 fF; o campo **C adicional (pF)** (padrão 0,2 pF: **valor provisório**) serve para calibrar com CST/VNA o
+  acoplamento real com a antena — é ele que faz a peça funcionar como sintonizador.
+- A sonda é um circuito físico (transformador ideal + reatância da sonda + susceptância traseira), sem perdas
+  (|S11| = |S22|). Botões: "Otimizar backshort + posição" (busca conjunta), "Otimizar backshort" e
+  "Otimizar C adicional" minimizam |Γ| na frequência de operação. A aba de varredura aceita a posição da peça.
 
 ## Modelo (src/mw.js)
 - Cascata de matrizes S em regime permanente; o circulador é resolvido como rede de 3 portas com

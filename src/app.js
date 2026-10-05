@@ -20,7 +20,7 @@
       ['launcher.cap.on', 'Peça capacitiva (1=sim, 0=não)', '', 1, 0],
       ['launcher.cap.dia', 'Peça: diâmetro', 'mm', 0.5, 1],
       ['launcher.cap.thick', 'Peça: espessura', 'mm', 0.5, 0.1],
-      ['launcher.cap.x', 'Peça: distância da antena (rumo à saída)', 'mm', 0.5, 0],
+      ['launcher.cap.x', 'Peça: posição (+ saída, − backshort)', 'mm', 1, -200],
       ['launcher.cap.cExtra', 'C adicional (acoplamento c/ antena)', 'pF', 0.05, 0],
     ]],
     ['Guia de onda 1', [['L1', 'Comprimento', 'mm', 5, 0]]],
@@ -118,7 +118,7 @@
         inf.id = 'launcherInfo'; inf.className = 'note'; inf.style.padding = '0 14px 6px';
         d.append(inf);
         const b = document.createElement('div'); b.className = 'btns';
-        b.innerHTML = '<button id="bTuneD">Otimizar backshort</button><button id="bTuneC">Otimizar C adicional</button>';
+        b.innerHTML = '<button id="bTuneDX">Otimizar backshort + posição</button><button id="bTuneD">Otimizar backshort</button><button id="bTuneC">Otimizar C adicional</button>';
         d.append(b);
       }
       if (title.startsWith('Ressonador')) {
@@ -140,6 +140,10 @@
     ms.value = P.src.model;
     ms.onchange = () => { applyMagnetron(ms.value, true); };
     applyMagnetron(P.src.model, false);
+    $('#bTuneDX').onclick = () => {
+      const r = MW.tuneLauncherDX(P);
+      setParam('launcher.d', +r.d.toFixed(2), true); setParam('launcher.cap.x', +r.x.toFixed(1));
+    };
     $('#bTuneD').onclick = () => setParam('launcher.d', +MW.tuneLauncher(P, 'd').v.toFixed(2));
     $('#bTuneC').onclick = () => setParam('launcher.cap.cExtra', +MW.tuneLauncher(P, 'c').v.toFixed(3));
     $('#bTune').onclick = () => {
@@ -230,6 +234,10 @@
     if (eMarg < 3) w.push('Campo no coaxial próximo da ruptura do ar (~3 MV/m): risco de arco.');
     if (r.pBackMag > 0.05 * P.src.pav) w.push('Mais de 5% da potência volta ao magnetron: ajuste launcher/comprimentos.');
     if (r.vswrLoad > 3) w.push('VSWR alto na carga: o isolador está desviando muita potência para a water load.');
+    if (P.launcher.cap.on && (P.launcher.cap.x < -P.launcher.d || P.launcher.cap.x > P.L1)) {
+      w.push('Peça capacitiva fora dos limites físicos (entre o backshort e o circulador): posição limitada a ' +
+        Math.max(-P.launcher.d, Math.min(P.launcher.cap.x, P.L1)).toFixed(0) + ' mm.');
+    }
     const { m: mg, pdc, pw } = magStatus();
     const nm = mg.name.split(' ')[0];
     if (P.src.f < mg.fMin || P.src.f > mg.fMax) w.push('Frequência fora da faixa de teste do ' + nm + ' (' + mg.fMin + '–' + mg.fMax + ' GHz).');
@@ -315,7 +323,7 @@
   // --------------------------------------------------------------------- abas
   const PARAM_LIST = [
     ['L1', 'Comprimento guia 1 (mm)'], ['L2', 'Comprimento guia 2 (mm)'], ['coax.L', 'Comprimento coax (mm)'],
-    ['launcher.d', 'Backshort launcher (mm)'], ['launcher.cap.x', 'Distância da peça capacitiva (mm)'], ['launcher.cap.cExtra', 'C adicional do launcher (pF)'],
+    ['launcher.d', 'Backshort launcher (mm)'], ['launcher.cap.x', 'Posição da peça capacitiva (mm)'], ['launcher.cap.cExtra', 'C adicional do launcher (pF)'],
     ['trans.d', 'Backshort transição (mm)'], ['trans.h', 'Probe transição (mm)'],
     ['res.l', 'Stub ressonador (mm)'], ['res.gap', 'Gap ressonador (mm)'], ['res.n', 'Acoplamento n'],
     ['sample.tand', 'tan δ da amostra'], ['sample.epsr', "ε' da amostra"], ['src.f', 'Frequência (GHz)'],
@@ -337,6 +345,7 @@
         view.par.path = e.target.value;
         const cur = MW.getPath(P, view.par.path);
         view.par.v0 = +(cur * 0.6).toPrecision(4); view.par.v1 = +(cur * 1.4).toPrecision(4);
+        if (view.par.path === 'launcher.cap.x') { view.par.v0 = -Math.min(200, P.launcher.d); view.par.v1 = Math.min(200, P.L1); }
         renderTab(); drawTab();
       });
       ['pv0', 'pv1'].forEach((id) => $('#' + id).addEventListener('input', (e) => { view.par[id.slice(1)] = parseFloat(e.target.value); drawTab(); }));

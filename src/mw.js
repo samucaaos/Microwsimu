@@ -87,8 +87,8 @@
     src: { model: 'yj1600', ia: 1150, pav: 6000, f: 2.46, waterFlow: 2.5, waterIn: 25 }, // mA, W, GHz, L/min, °C
     wg: { a: 86.36, b: 43.18, sigma: 3.5e7 },         // WR340, mm; alumínio
     launcher: {                                       // backshort (mm); h = fallback (a antena vem do magnetron)
-      d: 45, h: 28,
-      cap: { on: 1, dia: 12, thick: 2, x: 20, cExtra: 0 }, // peça capacitiva flutuante (mm) e C adicional (pF)
+      d: 33.5, h: 28,
+      cap: { on: 1, dia: 12, thick: 2, x: -23.5, cExtra: 0.2 }, // peça capacitiva flutuante (mm), x<0 = rumo ao backshort, e C adicional (pF)
     },
     L1: 300,                                          // guia 1 (mm)
     circ: { ilDb: 0.15, isoDb: 25, rlDb: 25 },        // perda de inserção, isolação, RL das portas
@@ -127,35 +127,53 @@
   }
 
   // ------------------------------------------------- modelo de probe/backshort
-  // Impedância normalizada vista do lado coaxial/fonte para uma sonda de altura
-  // h com curto-circuito (backshort) a distância d, num guia TE10.
-  //   r ∝ Zte·h_ef²/(a·b)·sin²(βd)      (resistência de radiação)
-  //   x = -0.5·cot(kh) - 0.5·cot(βd)    (sonda curta é capacitiva; backshort ajusta)
-  // Normalizado para casar (r=1, x=0) em d=λg/4, k·h=π/2 no WR340 a 2,45 GHz.
+  // Circuito: porta coax —(jXp série)— transformador 1:n — nó no guia, onde se somam
+  // o guia à frente (admitância 1, casado) e a susceptância traseira jb (backshort ± peça).
+  //   n² = geo·sin²(kh)·zNorm   (acoplamento da sonda; geo ∝ Zte/(a·b)), Xp = −0,5·cot(kh)
+  //   Sem peça: jb = −cot(βd) → máximo acoplamento em d = λg/4.
+  // Normalizado para casar (n²=1, Xp=0) em d=λg/4, kh=π/2 no WR340 a 2,45 GHz.
+  // Modelo empírico de 1ª ordem; validar com solver EM/medição.
   const REF = (function () {
     const g = waveguide(2.45e9, 86.36, 43.18, 3.5e7);
     return { zte: g.zte, a: g.a, b: g.b };
   })();
+  const cot = (x) => Math.cos(x) / (Math.abs(Math.sin(x)) < 1e-9 ? 1e-9 : Math.sin(x));
 
-  function probeGamma(f, g, d_mm, h_mm, zNorm) {
-    // devolve Γc (coeficiente de reflexão no lado coaxial/fonte)
-    if (!g.propagating) return ONE;
-    const d = d_mm * 1e-3, h = h_mm * 1e-3;
-    const bd = g.beta * d, kh = g.k * h;
+  // back = { s, u, b }: peça entre antena e backshort — s = distância backshort→peça (mm),
+  // u = distância peça→antena (mm), b = susceptância shunt normalizada da peça.
+  function probeS(f, g, d_mm, h_mm, zNorm, back) {
+    if (!g.propagating) return { s11: ONE, s22: ONE };
+    const h = h_mm * 1e-3;
+    const kh = g.k * h;
     const geo = (g.zte / (g.a * g.b)) / (REF.zte / (REF.a * REF.b));
-    const r = geo * Math.pow(Math.sin(bd), 2) * Math.pow(Math.sin(kh), 2) * zNorm;
-    const x = -0.5 * Math.cos(kh) / (Math.sin(kh) || 1e-9) - 0.5 * Math.cos(bd) / (Math.sin(bd) || 1e-9);
-    const z = cx(Math.max(r, 1e-6), x);
-    return z.sub(ONE).div(z.add(ONE));
+    const n2 = Math.max(geo * Math.pow(Math.sin(kh), 2) * zNorm, 1e-9);
+    const xp = -0.5 * cot(kh);
+    let bb = -cot(g.beta * d_mm * 1e-3);
+    if (back) {
+      const y1 = -cot(g.beta * Math.max(back.s, 0) * 1e-3) + back.b;
+      const t = Math.tan(g.beta * back.u * 1e-3);
+      let den = 1 - y1 * t;
+      if (Math.abs(den) < 1e-9) den = 1e-9;
+      bb = (y1 + t) / den;
+    }
+    const jx = cx(0, xp), jb = cx(0, bb);
+    const yGuide = jb.add(cx(n2, 0).div(ONE.add(jx)));        // visto do guia
+    const zCoax = jx.add(cx(n2, 0).div(ONE.add(jb)));         // visto da coax
+    return {
+      s11: ONE.sub(yGuide).div(ONE.add(yGuide)),
+      s22: zCoax.sub(ONE).div(zCoax.add(ONE)),
+    };
   }
 
-  // Dois-portas sem perda (exceto IL) a partir de Γc (S22). Porta 1 = guia, 2 = coax/fonte.
-  function probeTwoPort(gc, ilDb) {
-    const t = Math.sqrt(Math.max(0, 1 - gc.abs2()) * dbToPow(-ilDb));
-    return { s11: gc.conj().scale(-1), s21: cx(t, 0), s12: cx(t, 0), s22: gc };
+  // Dois-portas recíproco sem perda (exceto IL) a partir de S11 e S22 (fase de S21 por unitariedade).
+  function twoPortFromS(s11, s22, ilDb) {
+    const t = Math.sqrt(Math.max(0, 1 - s11.abs2()) * dbToPow(-ilDb));
+    const ph = (Math.atan2(s11.im, s11.re) + Math.atan2(s22.im, s22.re) - Math.PI) / 2;
+    const s21 = fromPolar(t, ph);
+    return { s11, s22, s12: s21, s21 };
   }
 
-  // Peça capacitiva flutuante (latão prateado em haste de teflon) entre a antena e a saída.
+  // Peça capacitiva flutuante (latão prateado em haste de teflon), móvel ao longo do guia.
   // Disco flutuante entre as paredes: C = ε0·A/(b−t) em série top/bottom (a folga ao teto se cancela);
   // o acréscimo sobre o guia vazio é ΔC = ε0·A·(1/(b−t) − 1/b). cExtra (pF) soma o acoplamento
   // com a antena não capturado pelo modelo — calibrar com CST/VNA.
@@ -168,19 +186,41 @@
     return { c, b: g.k * C0 * c * zw };
   }
 
-  // Γ olhando do plano de saída do launcher de volta para a fonte (antena + backshort + capacitor)
+  // Launcher: Γ visto do plano de saída olhando para a fonte.
+  //  x < 0 (peça entre antena e backshort): entra na susceptância traseira; plano de saída = antena.
+  //  x > 0 (peça entre antena e saída): shunt no plano x; a guia 1 vai da peça ao circulador (L1 − x),
+  //  pois L1 é medido a partir do plano da antena (posição física do circulador não muda).
   function launcherGamma(f, g, p) {
-    const L = p.launcher;
+    const L = p.launcher, cap = L.cap || { on: 0 };
     const mg = MAGNETRONS[p.src.model];
     const h = mg ? mg.antennaH : L.h;
-    const gcL = probeGamma(f, g, L.d, h, 1);
-    let gam = gcL.conj().scale(-1);                           // no plano da antena
-    if (!g.propagating) return gam;
-    const x = (L.cap && L.cap.on ? L.cap.x : 0) * 1e-3;
-    gam = gam.mul(Cx.exp(cx(0, -2 * g.beta * x)));            // até o plano da peça
-    const cp = launcherCap(g, L.cap);
-    const y = ONE.sub(gam).div(ONE.add(gam)).add(cx(0, cp.b)); // + susceptância shunt
-    return ONE.sub(y).div(ONE.add(y));
+    const on = !!cap.on && g.propagating;
+    const x = on ? Math.max(-L.d, Math.min(cap.x, p.L1)) : 0;   // limites físicos
+    const cp = launcherCap(g, cap);
+    const back = on && x <= 0 ? { s: L.d + x, u: -x, b: cp.b } : null;
+    const ps = probeS(f, g, L.d, h, 1, back);
+    if (!on || x <= 0) return { gamma: ps.s11, xFwd: 0, x, clamped: on && x !== cap.x };
+    const gam = ps.s11.mul(Cx.exp(cx(0, -2 * g.beta * x * 1e-3)));
+    const y = ONE.sub(gam).div(ONE.add(gam)).add(cx(0, cp.b));
+    return { gamma: ONE.sub(y).div(ONE.add(y)), xFwd: x, x, clamped: x !== cap.x };
+  }
+
+  // Busca conjunta backshort × posição da peça (varre 1 período de d e x ∈ [−min(200,d), min(200,L1)])
+  function tuneLauncherDX(p) {
+    const f = p.src.f * 1e9, g = waveguide(f, p.wg.a, p.wg.b, p.wg.sigma);
+    const q = clone(p);
+    let best = { d: null, x: null, g: Infinity };
+    const dHi = 5 + g.lambdaG * 500;
+    for (let d = 5; d <= dHi; d += 0.5) {
+      q.launcher.d = d;
+      const xLo = -Math.min(200, d), xHi = Math.min(200, p.L1);
+      for (let x = xLo; x <= xHi; x += 1) {
+        q.launcher.cap.x = x;
+        const m = launcherGamma(f, g, q).gamma.abs();
+        if (m < best.g - 1e-9) best = { d, x, g: m };
+      }
+    }
+    return best;
   }
 
   // Varre um parâmetro do launcher minimizando |Γ| na frequência de operação
@@ -188,13 +228,14 @@
     const f = p.src.f * 1e9, g = waveguide(f, p.wg.a, p.wg.b, p.wg.sigma);
     const q = clone(p);
     const spec = what === 'c' ? { set: (v) => { q.launcher.cap.cExtra = v; }, lo: 0, hi: 5, n: 1001 }
+      : what === 'x' ? { set: (v) => { q.launcher.cap.x = v; }, lo: -Math.min(200, p.launcher.d), hi: Math.min(200, p.L1), n: 1001 }
       : { set: (v) => { q.launcher.d = v; }, lo: 5, hi: 5 + g.lambdaG * 500, n: 1001 }; // 1 período (λg/2)
     let best = { v: null, g: Infinity };
     for (let i = 0; i < spec.n; i++) {
       const v = spec.lo + (spec.hi - spec.lo) * i / (spec.n - 1);
       spec.set(v);
-      const m = launcherGamma(f, g, q).abs();
-      if (m < best.g) best = { v, g: m };
+      const m = launcherGamma(f, g, q).gamma.abs();
+      if (m < best.g - 1e-9) best = { v, g: m };
     }
     return best;
   }
@@ -275,9 +316,10 @@
     }
 
     // --- fonte: magnetron + launcher (probe + backshort) ---
-    const gs0 = launcherGamma(f, wg, p);                     // Γ do launcher visto do guia
+    const lg = launcherGamma(f, wg, p);
+    const gs0 = lg.gamma;                                    // Γ do launcher visto do guia
     const bs0 = Math.sqrt(p.src.pav * (1 - gs0.abs2()));
-    const t1 = lineT(wg, p.L1);
+    const t1 = lineT(wg, Math.max(0, p.L1 - lg.xFwd));
     const t1sq = t1.mul(t1);
 
     // --- circulador (S cíclica 1→2→3→1) ---
@@ -285,8 +327,8 @@
 
     // --- carga (lado 2): guia 2 -> transição -> coax -> ressonador ---
     const co = coaxLine(f, p.coax);
-    const gcT = probeGamma(f, wg, p.trans.d, p.trans.h, 50 / co.z0);
-    const tp = probeTwoPort(gcT, p.trans.ilDb);
+    const ps = probeS(f, wg, p.trans.d, p.trans.h, 50 / co.z0, null);
+    const tp = twoPortFromS(ps.s11, ps.s22, p.trans.ilDb);
     const rr = resonatorGamma(f, p.res, p.sample, T, co.z0);
     const tc2 = Cx.exp(cx(-co.alpha * p.coax.L * 1e-3, -co.beta * p.coax.L * 1e-3));
     const gc0 = rr.gamma.mul(tc2).mul(tc2);                  // Γ no início do coax
@@ -458,8 +500,8 @@
   }
 
   const api = {
-    DEFAULTS, MAGNETRONS, launcherGamma, launcherCap, tuneLauncher, magnetronPower, filamentVoltage, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
-    waveguide, coaxLine, probeGamma, resonatorAdmittance,
+    DEFAULTS, MAGNETRONS, launcherGamma, launcherCap, tuneLauncher, tuneLauncherDX, magnetronPower, filamentVoltage, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
+    waveguide, coaxLine, probeS, twoPortFromS, resonatorAdmittance,
     tuneResonatorLength, criticalCoupling, setPath, getPath, constants: { C0, MU0, EPS0, ETA0 },
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -54,15 +54,34 @@ const rc = MW.simulate(p, 1.5e9, 25);
 ok(!rc.propagating, 'f < fc não propaga');
 // peça capacitiva do launcher
 const f2 = p.src.f * 1e9, gw = MW.waveguide(f2, p.wg.a, p.wg.b, p.wg.sigma);
-const cp0 = MW.launcherCap(gw, p.launcher.cap);
+const geoCap = MW.clone(p.launcher.cap); geoCap.cExtra = 0;
+const cp0 = MW.launcherCap(gw, geoCap);
 console.log('     peça flutuante: C = ' + (cp0.c * 1e15).toFixed(2) + ' fF, b = ' + cp0.b.toFixed(3));
 ok(cp0.c > 0 && cp0.b < 0.2, 'disco flutuante: efeito pequeno (ΔC positivo)');
-const g0 = MW.launcherGamma(f2, gw, p).abs();
+const g0 = MW.launcherGamma(f2, gw, p).gamma.abs();
 const tun = MW.tuneLauncher(p, 'd');
 ok(tun.g <= g0 + 1e-12, '|Γ| launcher otimizado (d=' + tun.v.toFixed(1) + ' mm) = ' + tun.g.toExponential(2));
 const q2 = MW.clone(p); q2.launcher.cap.cExtra = 1.5; q2.launcher.d = tun.v;
 const tc = MW.tuneLauncher(q2, 'c');
-ok(tc.g <= MW.launcherGamma(f2, gw, q2).abs() + 1e-12, 'otimização de C adicional: C=' + tc.v.toFixed(2) + ' pF');
+ok(tc.g <= MW.launcherGamma(f2, gw, q2).gamma.abs() + 1e-12, 'otimização de C adicional: C=' + tc.v.toFixed(2) + ' pF');
 const rr3 = MW.simulate(q2, f2, 25);
 ok(Math.abs(rr3.closure) < 1e-6, 'balanço fecha com peça capacitiva');
+// unitariedade da sonda e peça móvel (±200 mm)
+let uw = 0;
+for (let i = 0; i < 200; i++) {
+  const d = 10 + Math.random() * 120, h = 10 + Math.random() * 33;
+  const bk = Math.random() < 0.5 ? null : { s: d * Math.random(), u: 0, b: Math.random() * 3 };
+  if (bk) bk.u = d - bk.s;
+  const ps = MW.probeS(f2, gw, d, h, 1, bk);
+  uw = Math.max(uw, Math.abs(ps.s11.abs() - ps.s22.abs()));
+}
+ok(uw < 1e-9, 'sonda sem perda: |S11| = |S22| (dif. máx ' + uw.toExponential(1) + ')');
+const qd = MW.clone(p); const tdx = MW.tuneLauncherDX(qd);
+console.log('     d,x ótimos:', tdx.d.toFixed(1), tdx.x.toFixed(0), '|Γ| =', tdx.g.toExponential(2));
+ok(tdx.g < 0.05, '|Γ| launcher otimizado em d e x < 0,05');
+const qx = MW.clone(p); qx.launcher.cap.x = -500;
+ok(MW.launcherGamma(f2, gw, qx).clamped, 'x < −d é limitado ao backshort');
+let wx = 0;
+for (let x = -200; x <= 200; x += 10) { const qq = MW.clone(p); qq.launcher.cap.x = x; const rr = MW.simulate(qq, f2, 25); wx = Math.max(wx, Math.abs(rr.closure)); }
+ok(wx < 1e-6, 'balanço fecha ao mover a peça de −200 a +200 mm');
 process.exit(fail ? 1 : 0);
