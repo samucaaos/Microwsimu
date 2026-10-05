@@ -17,7 +17,11 @@
       ['wg.b', 'Guia: altura b', 'mm', 0.01, 10],
       ['wg.sigma', 'Condutividade do guia', 'S/m', 1e6, 1e6],
       ['launcher.d', 'Backshort (d)', 'mm', 0.5, 1],
-      ['launcher.h', 'Antena/probe (h)', 'mm', 0.5, 1],
+      ['launcher.cap.on', 'Peça capacitiva (1=sim, 0=não)', '', 1, 0],
+      ['launcher.cap.dia', 'Peça: diâmetro', 'mm', 0.5, 1],
+      ['launcher.cap.thick', 'Peça: espessura', 'mm', 0.5, 0.1],
+      ['launcher.cap.x', 'Peça: distância da antena (rumo à saída)', 'mm', 0.5, 0],
+      ['launcher.cap.cExtra', 'C adicional (acoplamento c/ antena)', 'pF', 0.05, 0],
     ]],
     ['Guia de onda 1', [['L1', 'Comprimento', 'mm', 5, 0]]],
     ['Isolador 3 vias + water load', [
@@ -109,6 +113,14 @@
         g.append(l, i, u);
       });
       d.append(g);
+      if (title.startsWith('Launcher')) {
+        const inf = document.createElement('div');
+        inf.id = 'launcherInfo'; inf.className = 'note'; inf.style.padding = '0 14px 6px';
+        d.append(inf);
+        const b = document.createElement('div'); b.className = 'btns';
+        b.innerHTML = '<button id="bTuneD">Otimizar backshort</button><button id="bTuneC">Otimizar C adicional</button>';
+        d.append(b);
+      }
       if (title.startsWith('Ressonador')) {
         const b = document.createElement('div'); b.className = 'btns';
         b.innerHTML = '<button id="bTune">Sintonizar comprimento</button><button id="bCoup">Acoplamento crítico</button>';
@@ -128,6 +140,8 @@
     ms.value = P.src.model;
     ms.onchange = () => { applyMagnetron(ms.value, true); };
     applyMagnetron(P.src.model, false);
+    $('#bTuneD').onclick = () => setParam('launcher.d', +MW.tuneLauncher(P, 'd').v.toFixed(2));
+    $('#bTuneC').onclick = () => setParam('launcher.cap.cExtra', +MW.tuneLauncher(P, 'c').v.toFixed(3));
     $('#bTune').onclick = () => {
       // sintoniza com a amostra à temperatura inicial
       setParam('res.l', +MW.tuneResonatorLength(P).toFixed(3));
@@ -162,6 +176,7 @@
       'RF típica ' + (st.pw.typ / 1e3).toFixed(2) + ' kW' + (st.pw.guaranteed ? ' · mín. garantido ' + (st.pw.guaranteed / 1e3).toFixed(2) + ' kW' : '') +
       ' · η ' + (100 * P.src.pav / Math.max(st.pdc, 1)).toFixed(0) + '%<br>' +
       'Filamento: pré-aquecimento ' + m.vfPre + ' V / ' + m.preheatS + ' s (' + m.ifTyp + ' A); operação ≈ ' + st.vf.toFixed(2) + ' V · eletroímã ' + m.imagMin + ' a ' + m.imagMax + ' A<br>' +
+      'Antena no guia: h ≈ ' + m.antennaH + ' mm (estimativa; usada no launcher)<br>' +
       'Água ≥ ' + m.waterFlowMin + ' L/min (≤ ' + m.waterPmax + ' MPa) · ar: antena ' + m.airAntenna + ', caixa de filtro ' + m.airFilter + ' L/min<br>' +
       'VSWR: ≤ ' + m.vswrGuar + ' garantido, ' + m.vswrMax + ' máx. absoluto · anodo dissipa ≈ ' + (pAnode / 1e3).toFixed(1) + ' kW → ΔT água ≈ ' + dTw.toFixed(1) + ' K';
     if (load) schedule();
@@ -300,7 +315,7 @@
   // --------------------------------------------------------------------- abas
   const PARAM_LIST = [
     ['L1', 'Comprimento guia 1 (mm)'], ['L2', 'Comprimento guia 2 (mm)'], ['coax.L', 'Comprimento coax (mm)'],
-    ['launcher.d', 'Backshort launcher (mm)'], ['launcher.h', 'Probe launcher (mm)'],
+    ['launcher.d', 'Backshort launcher (mm)'], ['launcher.cap.x', 'Distância da peça capacitiva (mm)'], ['launcher.cap.cExtra', 'C adicional do launcher (pF)'],
     ['trans.d', 'Backshort transição (mm)'], ['trans.h', 'Probe transição (mm)'],
     ['res.l', 'Stub ressonador (mm)'], ['res.gap', 'Gap ressonador (mm)'], ['res.n', 'Acoplamento n'],
     ['sample.tand', 'tan δ da amostra'], ['sample.epsr', "ε' da amostra"], ['src.f', 'Frequência (GHz)'],
@@ -383,6 +398,9 @@
   function update() {
     const r = MW.simulate(P, P.src.f * 1e9, P.sample.T0);
     if (!r.propagating) { showWarn([r.warn]); $('#chain').innerHTML = ''; $('#kpis').innerHTML = ''; return; }
+    const gw = r.wg, cp = MW.launcherCap(gw, P.launcher.cap);
+    $('#launcherInfo').innerHTML = 'Antena (do magnetron): h ≈ ' + MW.MAGNETRONS[P.src.model].antennaH + ' mm · peça: C ≈ ' +
+      (cp.c * 1e12).toFixed(3) + ' pF, b ≈ ' + cp.b.toFixed(3) + ' · |Γ| launcher ' + r.gammaLauncher.toFixed(3);
     renderChain(r); renderKpis(r); drawTab();
   }
 

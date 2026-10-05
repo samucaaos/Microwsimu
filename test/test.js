@@ -52,4 +52,17 @@ ok(h[h.length - 1].T > p.sample.T0, 'amostra aquece');
 // abaixo do corte
 const rc = MW.simulate(p, 1.5e9, 25);
 ok(!rc.propagating, 'f < fc não propaga');
+// peça capacitiva do launcher
+const f2 = p.src.f * 1e9, gw = MW.waveguide(f2, p.wg.a, p.wg.b, p.wg.sigma);
+const cp0 = MW.launcherCap(gw, p.launcher.cap);
+console.log('     peça flutuante: C = ' + (cp0.c * 1e15).toFixed(2) + ' fF, b = ' + cp0.b.toFixed(3));
+ok(cp0.c > 0 && cp0.b < 0.2, 'disco flutuante: efeito pequeno (ΔC positivo)');
+const g0 = MW.launcherGamma(f2, gw, p).abs();
+const tun = MW.tuneLauncher(p, 'd');
+ok(tun.g <= g0 + 1e-12, '|Γ| launcher otimizado (d=' + tun.v.toFixed(1) + ' mm) = ' + tun.g.toExponential(2));
+const q2 = MW.clone(p); q2.launcher.cap.cExtra = 1.5; q2.launcher.d = tun.v;
+const tc = MW.tuneLauncher(q2, 'c');
+ok(tc.g <= MW.launcherGamma(f2, gw, q2).abs() + 1e-12, 'otimização de C adicional: C=' + tc.v.toFixed(2) + ' pF');
+const rr3 = MW.simulate(q2, f2, 25);
+ok(Math.abs(rr3.closure) < 1e-6, 'balanço fecha com peça capacitiva');
 process.exit(fail ? 1 : 0);

@@ -69,6 +69,7 @@
       airAntenna: 60, airFilter: 120,                         // L/min de ar forçado
       vswrTest: 1.1, vswrGuar: 2.5, vswrMax: 4,               // VSWR de carga
       weight: 4.3,
+      antennaH: 28,   // mm, altura efetiva da antena no guia — ESTIMATIVA (Fig. 3 do datasheet ausente)
     },
   };
 
@@ -85,7 +86,10 @@
   const DEFAULTS = {
     src: { model: 'yj1600', ia: 1150, pav: 6000, f: 2.46, waterFlow: 2.5, waterIn: 25 }, // mA, W, GHz, L/min, °C
     wg: { a: 86.36, b: 43.18, sigma: 3.5e7 },         // WR340, mm; alumínio
-    launcher: { d: 45, h: 28 },                       // backshort (mm), antena/probe (mm)
+    launcher: {                                       // backshort (mm); h = fallback (a antena vem do magnetron)
+      d: 45, h: 28,
+      cap: { on: 1, dia: 12, thick: 2, x: 20, cExtra: 0 }, // peça capacitiva flutuante (mm) e C adicional (pF)
+    },
     L1: 300,                                          // guia 1 (mm)
     circ: { ilDb: 0.15, isoDb: 25, rlDb: 25 },        // perda de inserção, isolação, RL das portas
     water: { rlDb: 30, flow: 4 },                     // RL da carga, vazão (L/min)
@@ -149,6 +153,50 @@
   function probeTwoPort(gc, ilDb) {
     const t = Math.sqrt(Math.max(0, 1 - gc.abs2()) * dbToPow(-ilDb));
     return { s11: gc.conj().scale(-1), s21: cx(t, 0), s12: cx(t, 0), s22: gc };
+  }
+
+  // Peça capacitiva flutuante (latão prateado em haste de teflon) entre a antena e a saída.
+  // Disco flutuante entre as paredes: C = ε0·A/(b−t) em série top/bottom (a folga ao teto se cancela);
+  // o acréscimo sobre o guia vazio é ΔC = ε0·A·(1/(b−t) − 1/b). cExtra (pF) soma o acoplamento
+  // com a antena não capturado pelo modelo — calibrar com CST/VNA.
+  function launcherCap(g, cap) {
+    if (!cap || !cap.on || !g.propagating) return { c: 0, b: 0 };
+    const A = Math.PI * Math.pow(cap.dia * 0.5e-3, 2);
+    const bt = Math.max(g.b - cap.thick * 1e-3, 1e-4);
+    const c = Math.max(0, EPS0 * A * (1 / bt - 1 / g.b)) + (cap.cExtra || 0) * 1e-12;
+    const zw = Math.PI / 2 * (g.b / g.a) * g.zte;              // impedância tensão-corrente do TE10
+    return { c, b: g.k * C0 * c * zw };
+  }
+
+  // Γ olhando do plano de saída do launcher de volta para a fonte (antena + backshort + capacitor)
+  function launcherGamma(f, g, p) {
+    const L = p.launcher;
+    const mg = MAGNETRONS[p.src.model];
+    const h = mg ? mg.antennaH : L.h;
+    const gcL = probeGamma(f, g, L.d, h, 1);
+    let gam = gcL.conj().scale(-1);                           // no plano da antena
+    if (!g.propagating) return gam;
+    const x = (L.cap && L.cap.on ? L.cap.x : 0) * 1e-3;
+    gam = gam.mul(Cx.exp(cx(0, -2 * g.beta * x)));            // até o plano da peça
+    const cp = launcherCap(g, L.cap);
+    const y = ONE.sub(gam).div(ONE.add(gam)).add(cx(0, cp.b)); // + susceptância shunt
+    return ONE.sub(y).div(ONE.add(y));
+  }
+
+  // Varre um parâmetro do launcher minimizando |Γ| na frequência de operação
+  function tuneLauncher(p, what) {
+    const f = p.src.f * 1e9, g = waveguide(f, p.wg.a, p.wg.b, p.wg.sigma);
+    const q = clone(p);
+    const spec = what === 'c' ? { set: (v) => { q.launcher.cap.cExtra = v; }, lo: 0, hi: 5, n: 1001 }
+      : { set: (v) => { q.launcher.d = v; }, lo: 5, hi: 5 + g.lambdaG * 500, n: 1001 }; // 1 período (λg/2)
+    let best = { v: null, g: Infinity };
+    for (let i = 0; i < spec.n; i++) {
+      const v = spec.lo + (spec.hi - spec.lo) * i / (spec.n - 1);
+      spec.set(v);
+      const m = launcherGamma(f, g, q).abs();
+      if (m < best.g) best = { v, g: m };
+    }
+    return best;
   }
 
   // ------------------------------------------------------------------- coaxial
@@ -227,8 +275,7 @@
     }
 
     // --- fonte: magnetron + launcher (probe + backshort) ---
-    const gcL = probeGamma(f, wg, p.launcher.d, p.launcher.h, 1);
-    const gs0 = gcL.conj().scale(-1);                        // Γ do launcher visto do guia
+    const gs0 = launcherGamma(f, wg, p);                     // Γ do launcher visto do guia
     const bs0 = Math.sqrt(p.src.pav * (1 - gs0.abs2()));
     const t1 = lineT(wg, p.L1);
     const t1sq = t1.mul(t1);
@@ -411,7 +458,7 @@
   }
 
   const api = {
-    DEFAULTS, MAGNETRONS, magnetronPower, filamentVoltage, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
+    DEFAULTS, MAGNETRONS, launcherGamma, launcherCap, tuneLauncher, magnetronPower, filamentVoltage, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
     waveguide, coaxLine, probeGamma, resonatorAdmittance,
     tuneResonatorLength, criticalCoupling, setPath, getPath, constants: { C0, MU0, EPS0, ETA0 },
   };

@@ -22,6 +22,15 @@ circulador (garantido ≥ 4,3 kW a 950 mA e ≥ 5,5 kW a 1150 mA com VSWR 2,5 si
 A potência disponível segue a corrente de anodo (P ∝ Ia a Va constante). Pulling/pushing de frequência não consta
 nos datasheets e não é modelado. Novos modelos: adicionar uma entrada em `MAGNETRONS` (src/mw.js).
 
+## Launcher
+- A **antena** vem do magnetron (`antennaH` em `MAGNETRONS`); para o YJ1600 é uma estimativa de 28 mm
+  (a Fig. 3 do datasheet Toshiba, conector de saída de RF, não estava no PDF recebido).
+- **Peça capacitiva** de latão prateado, flutuante em haste de teflon, entre a antena e a saída: disco flutuante
+  entre as paredes superior/inferior, C = ε0·A/(b−t) em série (a folga ao teto se cancela), ΔC sobre o guia vazio
+  entra como susceptância shunt na posição da peça. No modelo de placas paralelas o efeito é pequeno (~1 fF);
+  o campo **C adicional (pF)** serve para calibrar com CST/VNA o acoplamento real com a antena.
+- Botões "Otimizar backshort" e "Otimizar C adicional" minimizam |Γ| na frequência de operação.
+
 ## Modelo (src/mw.js)
 - Cascata de matrizes S em regime permanente; o circulador é resolvido como rede de 3 portas com
   a water load na porta 3, incluindo a reflexão múltipla com a fonte (pulling não modelado).
