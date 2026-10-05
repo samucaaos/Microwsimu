@@ -6,8 +6,11 @@
   // [caminho, rótulo, unidade, passo, mínimo]
   const SCHEMA = [
     ['Magnetron / frequência', [
+      ['src.ia', 'Corrente de anodo (média)', 'mA', 10, 100],
       ['src.pav', 'Potência disponível', 'W', 100, 0],
       ['src.f', 'Frequência', 'GHz', 0.005, 1.8],
+      ['src.waterFlow', 'Água do anodo: vazão', 'L/min', 0.5, 0],
+      ['src.waterIn', 'Água do anodo: entrada', '°C', 1, 0],
     ]],
     ['Launcher WR340', [
       ['wg.a', 'Guia: largura a', 'mm', 0.01, 50],
@@ -91,7 +94,15 @@
         i.type = 'number'; i.step = step; i.min = min; i.value = MW.getPath(P, path);
         i.addEventListener('input', () => {
           const v = parseFloat(i.value);
-          if (!isNaN(v)) { MW.setPath(P, path, v); schedule(); }
+          if (!isNaN(v)) {
+            MW.setPath(P, path, v);
+            if (path === 'src.ia') {
+              const m = MW.MAGNETRONS[P.src.model];
+              setParam('src.pav', Math.round(MW.magnetronPower(m, v).typ), true);
+            }
+            if (path.startsWith('src.')) applyMagnetron(P.src.model, false);
+            schedule();
+          }
         });
         const u = document.createElement('span'); u.className = 'u'; u.textContent = unit;
         inputs[path] = i;
@@ -129,20 +140,30 @@
       schedule();
     };
   }
+  function magStatus() {
+    const m = MW.MAGNETRONS[P.src.model];
+    const pdc = m.vaPk * P.src.ia;                           // W (kV x mA)
+    const pw = MW.magnetronPower(m, P.src.ia);
+    return { m, pdc, pw, vf: MW.filamentVoltage(P.src.ia) };
+  }
   function applyMagnetron(key, load) {
     const m = MW.MAGNETRONS[key];
     P.src.model = key;
-    if (load) { setParam('src.pav', m.pav, true); setParam('src.f', m.fNom, true); }
-    const pdc = m.vaPk * 1e3 * m.iaMean;               // W (aprox., tensão de pico x corrente média)
-    const pAnode = pdc - m.pav;
-    const dTw = pAnode / (m.water / 60 * 0.997 * 4186);
+    if (load) {
+      setParam('src.ia', m.iaNom, true); setParam('src.pav', m.pavNom, true); setParam('src.f', m.fNom, true);
+      setParam('src.waterFlow', m.waterFlowMin, true);
+    }
+    const st = magStatus();
+    const pAnode = st.pdc - P.src.pav;
+    const dTw = pAnode / (Math.max(P.src.waterFlow, 1e-6) / 60 * 0.997 * 4186);
     $('#magInfo').innerHTML =
-      'Faixa ' + m.fMin.toFixed(2) + '–' + m.fMax.toFixed(2) + ' GHz (típ. ' + m.fNom.toFixed(2) + ') · ' +
-      (m.pav / 1e3) + ' kW com isolador / ' + (m.pavNoIso / 1e3) + ' kW sem · η ' + (m.eff * 100).toFixed(0) + '%<br>' +
-      'Va ' + m.vaPk + ' kV · Ia ' + (m.iaMean * 1e3).toFixed(0) + ' mA (pico ' + (m.iaPk * 1e3).toFixed(0) + ') · filamento ' + m.vfStart +
-      ' V / ' + m.ifStart + ' A · eletroímã ' + m.imag + ' A<br>' +
-      'Água ' + m.water + ' L/min · VSWR de carga típico ≤ ' + m.vswrMax + '<br>' +
-      'Dissipação no anodo ≈ ' + (pAnode / 1e3).toFixed(1) + ' kW → ΔT água ≈ ' + dTw.toFixed(1) + ' K';
+      'Frequência ' + m.fMin.toFixed(2) + '–' + m.fMax.toFixed(2) + ' GHz (típ. ' + m.fNom.toFixed(2) + '; fim de vida ' + m.fMinEol.toFixed(2) + '–' + m.fMaxEol.toFixed(2) + ')<br>' +
+      'Va ' + m.vaPk + ' kV · Ia ' + P.src.ia + ' mA (máx. ' + m.iaMax + ') · entrada DC ' + (st.pdc / 1e3).toFixed(2) + ' kW (máx. ' + m.pdcMax / 1e3 + ')<br>' +
+      'RF típica ' + (st.pw.typ / 1e3).toFixed(2) + ' kW' + (st.pw.guaranteed ? ' · mín. garantido ' + (st.pw.guaranteed / 1e3).toFixed(2) + ' kW' : '') +
+      ' · η ' + (100 * P.src.pav / Math.max(st.pdc, 1)).toFixed(0) + '%<br>' +
+      'Filamento: pré-aquecimento ' + m.vfPre + ' V / ' + m.preheatS + ' s (' + m.ifTyp + ' A); operação ≈ ' + st.vf.toFixed(2) + ' V · eletroímã ' + m.imagMin + ' a ' + m.imagMax + ' A<br>' +
+      'Água ≥ ' + m.waterFlowMin + ' L/min (≤ ' + m.waterPmax + ' MPa) · ar: antena ' + m.airAntenna + ', caixa de filtro ' + m.airFilter + ' L/min<br>' +
+      'VSWR: ≤ ' + m.vswrGuar + ' garantido, ' + m.vswrMax + ' máx. absoluto · anodo dissipa ≈ ' + (pAnode / 1e3).toFixed(1) + ' kW → ΔT água ≈ ' + dTw.toFixed(1) + ' K';
     if (load) schedule();
   }
   function setParam(path, v, silent) {
@@ -194,11 +215,19 @@
     if (eMarg < 3) w.push('Campo no coaxial próximo da ruptura do ar (~3 MV/m): risco de arco.');
     if (r.pBackMag > 0.05 * P.src.pav) w.push('Mais de 5% da potência volta ao magnetron: ajuste launcher/comprimentos.');
     if (r.vswrLoad > 3) w.push('VSWR alto na carga: o isolador está desviando muita potência para a water load.');
-    const mg = MW.MAGNETRONS[P.src.model];
-    if (mg) {
-      if (P.src.f < mg.fMin || P.src.f > mg.fMax) w.push('Frequência fora da faixa do ' + mg.name.split(' ')[0] + ' (' + mg.fMin + '–' + mg.fMax + ' GHz).');
-      if (r.vswrMag > mg.vswrMax) w.push('VSWR visto pelo magnetron (' + r.vswrMag.toFixed(2) + ') acima do típico (' + mg.vswrMax + '): risco de pulling e sobreaquecimento do anodo.');
-      if (P.src.pav > mg.pav) w.push('Potência acima da especificada para o ' + mg.name.split(' ')[0] + ' (' + mg.pav + ' W).');
+    const { m: mg, pdc, pw } = magStatus();
+    const nm = mg.name.split(' ')[0];
+    if (P.src.f < mg.fMin || P.src.f > mg.fMax) w.push('Frequência fora da faixa de teste do ' + nm + ' (' + mg.fMin + '–' + mg.fMax + ' GHz).');
+    if (r.vswrMag > mg.vswrMax) w.push('VSWR visto pelo magnetron (' + r.vswrMag.toFixed(2) + ') acima do máximo absoluto (' + mg.vswrMax + ':1): risco de dano.');
+    else if (r.vswrMag > mg.vswrGuar) w.push('VSWR visto pelo magnetron (' + r.vswrMag.toFixed(2) + ') acima de ' + mg.vswrGuar + ':1, condição em que a potência é garantida.');
+    if (P.src.ia > mg.iaMax) w.push('Corrente média de anodo acima do máximo (' + mg.iaMax + ' mA).');
+    if (pdc > mg.pdcMax) w.push('Entrada DC no anodo acima de ' + mg.pdcMax / 1e3 + ' kW.');
+    if (P.src.pav > pw.typ * 1.02) w.push('Potência acima da típica do ' + nm + ' para esta corrente (' + (pw.typ / 1e3).toFixed(2) + ' kW).');
+    if (P.src.waterFlow < mg.waterFlowMin) w.push('Vazão de água do anodo abaixo do mínimo (' + mg.waterFlowMin + ' L/min).');
+    else {
+      const tOut = P.src.waterIn + Math.max(0, pdc - r.pLaunch) / (P.src.waterFlow / 60 * 0.997 * 4186);
+      if (tOut > mg.waterOutClosed) w.push('Água na saída do anodo (' + tOut.toFixed(0) + ' °C) acima de ' + mg.waterOutClosed + ' °C.');
+      else if (tOut > mg.waterOutOpen) w.push('Água na saída do anodo (' + tOut.toFixed(0) + ' °C) acima de ' + mg.waterOutOpen + ' °C (limite de circuito aberto).');
     }
     if (P.res.Di >= P.res.Do) w.push('Ressonador: Ø central ≥ Ø da cavidade.');
     if (P.coax.Di >= P.coax.Do) w.push('Coax: Ø do condutor interno ≥ Ø do externo.');

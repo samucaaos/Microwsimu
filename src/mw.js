@@ -51,22 +51,39 @@
   const vswrFromGamma = (g) => (g >= 0.999999 ? Infinity : (1 + g) / (1 - g));
 
   // ------------------------------------------------------ biblioteca de magnetrons
-  // Fonte: especificações públicas do YJ1600 (equiv. E3327 / ECK-625), CW, refrigerado a água.
-  // Itens sem valor confirmado (pulling/pushing de frequência) não são modelados.
+  // Fontes: Toshiba E3327 spec. E200012-L935 (22/10/2020) e National Electronics/Richardson
+  // YJ1600 (Rev. 6/2019). YJ1600 = E3327 (CW, 2460 MHz, anodo a água, eletroímã integrado).
+  // Pulling/pushing de frequência não consta nos datasheets e não é modelado.
   const MAGNETRONS = {
     yj1600: {
-      name: 'YJ1600 (6 kW, 2450 MHz, água)',
-      fNom: 2.46, fMin: 2.45, fMax: 2.47,       // GHz
-      pav: 6000, pavNoIso: 5000,                // W (com / sem isolador)
-      eff: 0.72, vaPk: 7.2, iaMean: 1.15, iaPk: 1.3, // kV, A, A
-      vfStart: 5, ifStart: 33, imag: 2,         // V, A, A (eletroímã a 25 °C)
-      water: 5, vswrMax: 1.2,                   // L/min, VSWR de carga típico
+      name: 'YJ1600 / E3327 (6 kW, 2460 MHz, água)',
+      fNom: 2.46, fMin: 2.45, fMax: 2.47, fMinEol: 2.44, fMaxEol: 2.48, // GHz (teste / fim de vida)
+      vaPk: 7.2, vaPkMax: 8, vaSurgeMax: 10,                  // kV
+      iaNom: 1150, iaMin: 100, iaMax: 1150, iaPkMax: 1400,    // mA (média / pico)
+      pdcMax: 9000,                                           // W (entrada média máx. no anodo)
+      pavNom: 6000,                                           // W típico a 1150 mA, com circulador
+      pMinAt950: 4300, pMinAt1150: 5500,                      // W garantidos (VSWR 1,1 / 2,5 sink)
+      vfPre: 5, preheatS: 10, ifTyp: 33, ifSurge: 85, rCold: 0.023, // V, s, A, A, ohm
+      imagMin: -2, imagMax: 0, imagAbsMax: 5,                 // A (teste / absoluto)
+      waterFlowMin: 2.5, waterPmax: 0.49, waterOutOpen: 65, waterOutClosed: 75, tAnodeMax: 85, // L/min, MPa, °C
+      airAntenna: 60, airFilter: 120,                         // L/min de ar forçado
+      vswrTest: 1.1, vswrGuar: 2.5, vswrMax: 4,               // VSWR de carga
+      weight: 4.3,
     },
   };
 
+  // Potência RF típica (Va = 7,2 kV mantida pelo eletroímã) e mínimo garantido, em função de Ia.
+  function magnetronPower(m, iaMA) {
+    const typ = m.pavNom * iaMA / m.iaNom;
+    const g = m.pMinAt950 + (m.pMinAt1150 - m.pMinAt950) * (iaMA - 950) / (1150 - 950);
+    return { typ, guaranteed: iaMA >= 950 ? g : null };
+  }
+  // Tensão de filamento de operação (Fig. 4 do datasheet, reta ajustada; ±0,2 V)
+  const filamentVoltage = (iaMA) => Math.max(0, 4.0 - 0.0036 * iaMA);
+
   // -------------------------------------------------------- parâmetros padrão
   const DEFAULTS = {
-    src: { model: 'yj1600', pav: 6000, f: 2.46 },   // W, GHz
+    src: { model: 'yj1600', ia: 1150, pav: 6000, f: 2.46, waterFlow: 2.5, waterIn: 25 }, // mA, W, GHz, L/min, °C
     wg: { a: 86.36, b: 43.18, sigma: 3.5e7 },         // WR340, mm; alumínio
     launcher: { d: 45, h: 28 },                       // backshort (mm), antena/probe (mm)
     L1: 300,                                          // guia 1 (mm)
@@ -394,7 +411,7 @@
   }
 
   const api = {
-    DEFAULTS, MAGNETRONS, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
+    DEFAULTS, MAGNETRONS, magnetronPower, filamentVoltage, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
     waveguide, coaxLine, probeGamma, resonatorAdmittance,
     tuneResonatorLength, criticalCoupling, setPath, getPath, constants: { C0, MU0, EPS0, ETA0 },
   };
