@@ -12,6 +12,13 @@ Botões do ressonador: **Sintonizar comprimento** e **Acoplamento crítico**.
 
 Testes do motor: `node test/test.js`.
 
+## Biblioteca de magnetrons
+Lista de seleção no grupo "Magnetron". Por ora só o **YJ1600** (equiv. E3327/ECK-625): 6 kW com isolador
+(5 kW sem), 2,45–2,47 GHz (típ. 2,46), η 72 %, Va 7,2 kV, Ia 1150 mA (pico 1300), filamento 5 V/33 A,
+eletroímã 2 A, água 5 L/min, VSWR de carga típico ≤ 1,2. Fontes: especificações públicas de fornecedores
+(Rell Tubes, Kindevi, Western Electric). Pulling/pushing de frequência não foi confirmado e não é modelado.
+Novos modelos: adicionar uma entrada em `MAGNETRONS` (src/mw.js).
+
 ## Modelo (src/mw.js)
 - Cascata de matrizes S em regime permanente; o circulador é resolvido como rede de 3 portas com
   a water load na porta 3, incluindo a reflexão múltipla com a fonte (pulling não modelado).

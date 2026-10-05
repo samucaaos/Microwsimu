@@ -7,7 +7,8 @@ const f = p.src.f * 1e9;
 // guia WR340
 const g = MW.waveguide(f, 86.36, 43.18, 3.5e7);
 ok(Math.abs(g.fc / 1e9 - 1.736) < 0.005, 'fc WR340 = ' + (g.fc / 1e9).toFixed(4) + ' GHz');
-ok(Math.abs(g.lambdaG * 1e3 - 173.4) < 1, 'λg = ' + (g.lambdaG * 1e3).toFixed(1) + ' mm');
+const lg = (299792458 / f) / Math.sqrt(1 - Math.pow(g.fc / f, 2)) * 1e3;
+ok(Math.abs(g.lambdaG * 1e3 - lg) < 0.01, 'λg = ' + (g.lambdaG * 1e3).toFixed(1) + ' mm');
 console.log('     atenuação Al = ' + (g.alpha * 8.686).toFixed(4) + ' dB/m');
 
 // coax 50 ohm

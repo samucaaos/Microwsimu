@@ -7,7 +7,7 @@
   const SCHEMA = [
     ['Magnetron / frequência', [
       ['src.pav', 'Potência disponível', 'W', 100, 0],
-      ['src.f', 'Frequência', 'GHz', 0.001, 1.8],
+      ['src.f', 'Frequência', 'GHz', 0.005, 1.8],
     ]],
     ['Launcher WR340', [
       ['wg.a', 'Guia: largura a', 'mm', 0.01, 50],
@@ -63,7 +63,7 @@
   const inputs = {};
   let tab = 'freq';
   const view = {
-    freq: { f0: 2.40, f1: 2.50 },
+    freq: { f0: 2.44, f1: 2.48 },
     par: { path: 'L2', v0: 200, v1: 600 },
   };
 
@@ -74,6 +74,15 @@
       const d = document.createElement('details');
       if (gi < 2 || title.startsWith('Ressonador')) d.open = true;
       d.innerHTML = '<summary>' + title + '</summary>';
+      if (title.startsWith('Magnetron')) {
+        const sel = document.createElement('div');
+        sel.className = 'grid';
+        sel.innerHTML = '<select id="magSel" style="grid-column:1/4"></select>';
+        d.append(sel);
+        const info = document.createElement('div');
+        info.id = 'magInfo'; info.className = 'note'; info.style.padding = '0 14px 8px';
+        d.append(info);
+      }
       const g = document.createElement('div');
       g.className = 'grid';
       rows.forEach(([path, label, unit, step, min]) => {
@@ -101,6 +110,13 @@
       }
       host.append(d);
     });
+    const ms = $('#magSel');
+    Object.keys(MW.MAGNETRONS).forEach((k) => {
+      const o = document.createElement('option'); o.value = k; o.textContent = MW.MAGNETRONS[k].name; ms.append(o);
+    });
+    ms.value = P.src.model;
+    ms.onchange = () => { applyMagnetron(ms.value, true); };
+    applyMagnetron(P.src.model, false);
     $('#bTune').onclick = () => {
       // sintoniza com a amostra à temperatura inicial
       setParam('res.l', +MW.tuneResonatorLength(P).toFixed(3));
@@ -109,8 +125,25 @@
     $('#bReset').onclick = () => {
       const d = MW.clone(MW.DEFAULTS);
       Object.keys(inputs).forEach((k) => setParam(k, MW.getPath(d, k), true));
+      $('#magSel').value = d.src.model; applyMagnetron(d.src.model, false);
       schedule();
     };
+  }
+  function applyMagnetron(key, load) {
+    const m = MW.MAGNETRONS[key];
+    P.src.model = key;
+    if (load) { setParam('src.pav', m.pav, true); setParam('src.f', m.fNom, true); }
+    const pdc = m.vaPk * 1e3 * m.iaMean;               // W (aprox., tensão de pico x corrente média)
+    const pAnode = pdc - m.pav;
+    const dTw = pAnode / (m.water / 60 * 0.997 * 4186);
+    $('#magInfo').innerHTML =
+      'Faixa ' + m.fMin.toFixed(2) + '–' + m.fMax.toFixed(2) + ' GHz (típ. ' + m.fNom.toFixed(2) + ') · ' +
+      (m.pav / 1e3) + ' kW com isolador / ' + (m.pavNoIso / 1e3) + ' kW sem · η ' + (m.eff * 100).toFixed(0) + '%<br>' +
+      'Va ' + m.vaPk + ' kV · Ia ' + (m.iaMean * 1e3).toFixed(0) + ' mA (pico ' + (m.iaPk * 1e3).toFixed(0) + ') · filamento ' + m.vfStart +
+      ' V / ' + m.ifStart + ' A · eletroímã ' + m.imag + ' A<br>' +
+      'Água ' + m.water + ' L/min · VSWR de carga típico ≤ ' + m.vswrMax + '<br>' +
+      'Dissipação no anodo ≈ ' + (pAnode / 1e3).toFixed(1) + ' kW → ΔT água ≈ ' + dTw.toFixed(1) + ' K';
+    if (load) schedule();
   }
   function setParam(path, v, silent) {
     MW.setPath(P, path, v);
@@ -151,7 +184,7 @@
     const k = (l, n, s, cls) => '<div class="panel kpi"><div class="l">' + l + '</div><div class="n ' + (cls || '') + '">' + n + (s ? ' <small>' + s + '</small>' : '') + '</div></div>';
     $('#kpis').innerHTML =
       k('Potência na amostra', fW(r.pSample), eff.toFixed(1) + '% da disponível', eff > 80 ? 'good' : eff < 50 ? 'bad' : '') +
-      k('Refletida ao magnetron', fW(r.pBackMag), 'RL ' + r.rlMagDb.toFixed(1) + ' dB', r.pBackMag > 0.05 * P.src.pav ? 'bad' : '') +
+      k('Refletida ao magnetron', fW(r.pBackMag), 'VSWR ' + r.vswrMag.toFixed(2), r.pBackMag > 0.05 * P.src.pav ? 'bad' : '') +
       k('Dissipada na water load', fW(r.pWater), fPct(r.pWater, r.pLaunch)) +
       k('VSWR do ressonador', fmtV(r.vswrRes), '|Γ| ' + r.gammaRes.toFixed(3), r.vswrRes < 1.5 ? 'good' : 'bad') +
       k('Q carregado (amostra)', r.qSampleLoaded.toFixed(0), 'Q0 ' + r.qUnloaded.toFixed(0)) +
@@ -161,6 +194,12 @@
     if (eMarg < 3) w.push('Campo no coaxial próximo da ruptura do ar (~3 MV/m): risco de arco.');
     if (r.pBackMag > 0.05 * P.src.pav) w.push('Mais de 5% da potência volta ao magnetron: ajuste launcher/comprimentos.');
     if (r.vswrLoad > 3) w.push('VSWR alto na carga: o isolador está desviando muita potência para a water load.');
+    const mg = MW.MAGNETRONS[P.src.model];
+    if (mg) {
+      if (P.src.f < mg.fMin || P.src.f > mg.fMax) w.push('Frequência fora da faixa do ' + mg.name.split(' ')[0] + ' (' + mg.fMin + '–' + mg.fMax + ' GHz).');
+      if (r.vswrMag > mg.vswrMax) w.push('VSWR visto pelo magnetron (' + r.vswrMag.toFixed(2) + ') acima do típico (' + mg.vswrMax + '): risco de pulling e sobreaquecimento do anodo.');
+      if (P.src.pav > mg.pav) w.push('Potência acima da especificada para o ' + mg.name.split(' ')[0] + ' (' + mg.pav + ' W).');
+    }
     if (P.res.Di >= P.res.Do) w.push('Ressonador: Ø central ≥ Ø da cavidade.');
     if (P.coax.Di >= P.coax.Do) w.push('Coax: Ø do condutor interno ≥ Ø do externo.');
     showWarn(w);

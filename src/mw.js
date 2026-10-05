@@ -50,9 +50,23 @@
   const dbToPow = (db) => Math.pow(10, db / 10);
   const vswrFromGamma = (g) => (g >= 0.999999 ? Infinity : (1 + g) / (1 - g));
 
+  // ------------------------------------------------------ biblioteca de magnetrons
+  // Fonte: especificações públicas do YJ1600 (equiv. E3327 / ECK-625), CW, refrigerado a água.
+  // Itens sem valor confirmado (pulling/pushing de frequência) não são modelados.
+  const MAGNETRONS = {
+    yj1600: {
+      name: 'YJ1600 (6 kW, 2450 MHz, água)',
+      fNom: 2.46, fMin: 2.45, fMax: 2.47,       // GHz
+      pav: 6000, pavNoIso: 5000,                // W (com / sem isolador)
+      eff: 0.72, vaPk: 7.2, iaMean: 1.15, iaPk: 1.3, // kV, A, A
+      vfStart: 5, ifStart: 33, imag: 2,         // V, A, A (eletroímã a 25 °C)
+      water: 5, vswrMax: 1.2,                   // L/min, VSWR de carga típico
+    },
+  };
+
   // -------------------------------------------------------- parâmetros padrão
   const DEFAULTS = {
-    src: { pav: 6000, f: 2.45 },                      // W, GHz
+    src: { model: 'yj1600', pav: 6000, f: 2.46 },   // W, GHz
     wg: { a: 86.36, b: 43.18, sigma: 3.5e7 },         // WR340, mm; alumínio
     launcher: { d: 45, h: 28 },                       // backshort (mm), antena/probe (mm)
     L1: 300,                                          // guia 1 (mm)
@@ -62,7 +76,7 @@
     trans: { d: 43, h: 30, ilDb: 0.1 },               // backshort, probe (mm), perda extra
     coax: { Do: 40, Di: 17.4, L: 500, epsr: 1, tand: 0, sigma: 5.8e7 }, // mm; ~1-5/8" EIA 50 ohm
     res: {                                            // ressonador coaxial reentrante
-      Do: 40, Di: 20, l: 11.84, gap: 5, fill: 0.6, n: 6.22, sigma: 5.8e7,
+      Do: 40, Di: 20, l: 11.76, gap: 5, fill: 0.6, n: 6.21, sigma: 5.8e7,
     },
     sample: {                                         // amostra no gap
       epsr: 5, tand: 0.02, kEps: 0, kTand: 0.004,     // coef. por K
@@ -268,6 +282,7 @@
       pWall, pSample,
       pLoss: pG1 + pCirc + pG2 + pTr + pCoax + pWall,
       closure: pLaunch - (pG1 + pCirc + pWater + pG2 + pTr + pCoax + pWall + pSample),
+      vswrMag: vswrFromGamma(bL.abs() / aL.abs()),
       gammaLauncher: gs0.abs(), gammaSrcSide: gG1, gammaTransition: gG2,
       gammaLoadAtCirc: gL2.abs(), gammaRes: gCoax, gammaResC: rr.gamma,
       vswrLoad: vswrFromGamma(gL2.abs()), vswrRes: vswrFromGamma(gCoax),
@@ -379,7 +394,7 @@
   }
 
   const api = {
-    DEFAULTS, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
+    DEFAULTS, MAGNETRONS, clone, Cx, simulate, sweepFrequency, sweepParam, simulateHeating,
     waveguide, coaxLine, probeGamma, resonatorAdmittance,
     tuneResonatorLength, criticalCoupling, setPath, getPath, constants: { C0, MU0, EPS0, ETA0 },
   };
